@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Patient, PatientRequest, PatientStatus } from '../../types';
+import { Patient, PatientRequest, PatientStatus, Room, Allocation } from '../../types';
 import { patientService } from '../../services/patientService';
 import { allocationService } from '../../services/allocationService';
+import { roomService } from '../../services/roomService';
 import Button from '../Shared/Button';
 
 interface PatientFormProps {
@@ -20,9 +21,14 @@ export default function PatientForm({ patient, onSuccess, onCancel }: PatientFor
     gender: '',
     bloodGroup: '',
     status: PatientStatus.ACTIVE,
+    roomId: undefined,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [availableRooms, setAvailableRooms] = useState<Room[]>([]);
+  const [loadingRooms, setLoadingRooms] = useState(false);
+  const [currentAllocation, setCurrentAllocation] = useState<Allocation | null>(null);
+  const [loadingAllocation, setLoadingAllocation] = useState(false);
 
   useEffect(() => {
     if (patient) {
@@ -35,7 +41,84 @@ export default function PatientForm({ patient, onSuccess, onCancel }: PatientFor
         gender: patient.gender || '',
         bloodGroup: patient.bloodGroup || '',
         status: patient.status,
+        roomId: undefined, 
       });
+    }
+  }, [patient]);
+
+  useEffect(() => {
+    if (!patient) {
+      const fetchAvailableRooms = async () => {
+        setLoadingRooms(true);
+        try {
+          const rooms = await roomService.getAvailable();
+          setAvailableRooms(rooms);
+        } catch (err) {
+          console.error('Failed to fetch available rooms:', err);
+        } finally {
+          setLoadingRooms(false);
+        }
+      };
+      fetchAvailableRooms();
+    }
+  }, [patient]);
+
+  // Fetch current allocation and available rooms when editing a patient
+  useEffect(() => {
+    if (patient) {
+      const fetchData = async () => {
+        setLoadingAllocation(true);
+        setLoadingRooms(true);
+        try {
+          let allocation: Allocation | null = null;
+          // Fetch current allocation
+          try {
+            allocation = await allocationService.getByPatientId(patient.id);
+            setCurrentAllocation(allocation);
+            // Set roomId only if allocation exists
+            if (allocation) {
+              const roomId = allocation.roomId;
+              setFormData((prev) => ({ ...prev, roomId }));
+            } else {
+              // No allocation found, ensure roomId is undefined
+              setFormData((prev) => ({ ...prev, roomId: undefined }));
+            }
+          } catch (error) {
+            console.error('Failed to fetch allocation:', error);
+            setCurrentAllocation(null);
+            // On error, ensure roomId is undefined
+            setFormData((prev) => ({ ...prev, roomId: undefined }));
+          }
+
+          // Fetch available rooms (including currently occupied room if patient has allocation)
+          try {
+            const availableRooms = await roomService.getAvailable();
+            // If patient has a current allocation, include that room in the list
+            if (allocation) {
+              try {
+                const currentRoom = await roomService.getById(allocation.roomId);
+                // Add current room if it's not in the available list
+                if (!availableRooms.find(r => r.id === currentRoom.id)) {
+                  setAvailableRooms([currentRoom, ...availableRooms]);
+                } else {
+                  setAvailableRooms(availableRooms);
+                }
+              } catch (error) {
+                console.error('Failed to fetch current room:', error);
+                setAvailableRooms(availableRooms);
+              }
+            } else {
+              setAvailableRooms(availableRooms);
+            }
+          } catch (err) {
+            console.error('Failed to fetch available rooms:', err);
+          }
+        } finally {
+          setLoadingAllocation(false);
+          setLoadingRooms(false);
+        }
+      };
+      fetchData();
     }
   }, [patient]);
 
@@ -78,10 +161,16 @@ export default function PatientForm({ patient, onSuccess, onCancel }: PatientFor
         }
       }
 
+ 
+      const submitData: PatientRequest = {
+        ...formData,
+        roomId: formData.roomId && formData.roomId > 0 ? formData.roomId : undefined,
+      };
+
       if (patient) {
-        await patientService.update(patient.id, formData);
+        await patientService.update(patient.id, submitData);
       } else {
-        await patientService.create(formData);
+        await patientService.create(submitData);
       }
       onSuccess();
     } catch (err: any) {
@@ -198,6 +287,66 @@ export default function PatientForm({ patient, onSuccess, onCancel }: PatientFor
             <option value={PatientStatus.DECEASED}>DECEASED</option>
           </select>
         </div>
+
+        {!patient && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Room</label>
+            <select
+              name="roomId"
+              value={formData.roomId || ''}
+              onChange={(e) => {
+                const value = e.target.value;
+                setFormData((prev) => ({ ...prev, roomId: value ? parseInt(value) : undefined }));
+              }}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              disabled={loadingRooms}
+            >
+              <option value="">Select Room (Optional)</option>
+              {availableRooms.map((room) => (
+                <option key={room.id} value={room.id}>
+                  {room.roomNumber} - {room.roomType} (Floor {room.floor})
+                </option>
+              ))}
+            </select>
+            {loadingRooms && (
+              <p className="text-xs text-gray-500 mt-1">Loading available rooms...</p>
+            )}
+          </div>
+        )}
+
+        {patient && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Room</label>
+            {loadingAllocation || loadingRooms ? (
+              <p className="text-sm text-gray-500">Loading rooms...</p>
+            ) : (
+              <>
+                <select
+                  name="roomId"
+                  value={formData.roomId || ''}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setFormData((prev) => ({ ...prev, roomId: value ? parseInt(value) : undefined }));
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">No Room (Remove Allocation)</option>
+                  {availableRooms.map((room) => (
+                    <option key={room.id} value={room.id}>
+                      {room.roomNumber} - {room.roomType} (Floor {room.floor})
+                      {currentAllocation && room.id === currentAllocation.roomId ? ' (Current)' : ''}
+                    </option>
+                  ))}
+                </select>
+                {currentAllocation && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Currently allocated to {currentAllocation.roomNumber} since {new Date(currentAllocation.allocationDate).toLocaleDateString()}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div>

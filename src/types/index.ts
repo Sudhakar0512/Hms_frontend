@@ -40,6 +40,14 @@ export interface Patient {
   gender?: string;
   bloodGroup?: string;
   status: PatientStatus;
+  // Room allocation information
+  roomId?: number;
+  roomNumber?: string;
+  roomType?: RoomType;
+  allocationDate?: string;
+  dischargeDate?: string;
+  totalAmount?: number;
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -53,6 +61,9 @@ export interface PatientRequest {
   gender?: string;
   bloodGroup?: string;
   status?: PatientStatus;
+  roomId?: number;
+  allocationDate?: string;
+  notes?: string;
 }
 
 export interface Room {
@@ -93,13 +104,6 @@ export interface Allocation {
   notes?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface AllocationRequest {
-  patientId: number;
-  roomId: number;
-  allocationDate?: string;
-  notes?: string;
 }
 
 export interface TransferRequest {
